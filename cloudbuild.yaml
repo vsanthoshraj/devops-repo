@@ -1,6 +1,8 @@
 steps:
 
-  # 1. Build Docker image
+  # ============================================================
+  # 1. BUILD DOCKER IMAGE
+  # ============================================================
   - name: 'gcr.io/cloud-builders/docker'
     id: 'BUILD-IMAGE'
     args:
@@ -9,7 +11,10 @@ steps:
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA'
       - '.'
 
-  # 2. Push image to Artifact Registry
+
+  # ============================================================
+  # 2. PUSH IMAGE TO ARTIFACT REGISTRY
+  # ============================================================
   - name: 'gcr.io/cloud-builders/docker'
     id: 'PUSH-IMAGE'
     waitFor:
@@ -18,22 +23,108 @@ steps:
       - 'push'
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA'
 
-  # 3. Scan image with Trivy
-  - name: 'aquasec/trivy'
+
+  # ============================================================
+  # 3. TRIVY SECURITY SCAN
+  # ============================================================
+  - name: 'aquasec/trivy:0.72.0'
     id: 'TRIVY-SCAN'
     waitFor:
       - 'PUSH-IMAGE'
+    entrypoint: 'sh'
     args:
-      - 'image'
-      - '--severity'
-      - 'HIGH,CRITICAL'
-      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA'
+      - '-c'
+      - |
+        echo "=========================================="
+        echo "Starting Trivy Security Scan"
+        echo "=========================================="
 
-  # 4. Deploy to Cloud Run
+        echo "Image:"
+        echo "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA"
+
+        echo ""
+        echo "Start time:"
+        date
+
+        START_TIME=$$(date +%s)
+
+        echo ""
+        echo "Running Trivy..."
+
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --timeout 10m \
+          --format table \
+          "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA"
+
+        echo ""
+        echo "Generating HTML report..."
+
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --format template \
+          --template "@contrib/html.tpl" \
+          --output /workspace/trivy-report.html \
+          "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA"
+
+        echo ""
+        echo "Generating JSON report..."
+
+        trivy image \
+          --severity HIGH,CRITICAL \
+          --format json \
+          --output /workspace/trivy-report.json \
+          "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA"
+
+        END_TIME=$$(date +%s)
+
+        DURATION=$$((END_TIME - START_TIME))
+
+        echo ""
+        echo "=========================================="
+        echo "Trivy Scan Completed"
+        echo "=========================================="
+        echo "Scan duration: $${DURATION} seconds"
+        echo "End time:"
+        date
+        echo "=========================================="
+
+
+  # ============================================================
+  # 4. UPLOAD TRIVY REPORTS TO CLOUD STORAGE
+  # ============================================================
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'UPLOAD-REPORTS'
+    waitFor:
+      - 'TRIVY-SCAN'
+    entrypoint: 'gcloud'
+    args:
+      - 'storage'
+      - 'cp'
+      - '/workspace/trivy-report.html'
+      - 'gs://${_REPORT_BUCKET}/$BUILD_ID/trivy-report.html'
+
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'UPLOAD-JSON'
+    waitFor:
+      - 'TRIVY-SCAN'
+    entrypoint: 'gcloud'
+    args:
+      - 'storage'
+      - 'cp'
+      - '/workspace/trivy-report.json'
+      - 'gs://${_REPORT_BUCKET}/$BUILD_ID/trivy-report.json'
+
+
+  # ============================================================
+  # 5. DEPLOY TO CLOUD RUN
+  # ============================================================
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'DEPLOY-CLOUD-RUN'
     waitFor:
-      - 'TRIVY-SCAN'
+      - 'UPLOAD-REPORTS'
+      - 'UPLOAD-JSON'
     entrypoint: 'gcloud'
     args:
       - 'run'
@@ -47,13 +138,20 @@ steps:
       - 'managed'
       - '--quiet'
 
-# Substitutions
+
+# ================================================================
+# SUBSTITUTIONS
+# ================================================================
 substitutions:
   _REGION: 'asia-south1'
   _REPOSITORY: 'sk-trivy'
   _IMAGE: 'python-app'
   _SERVICE_NAME: 'sk-trivy-app'
+  _REPORT_BUCKET: 'gcp-sanbox-exp-trivy-reports'
 
-# Cloud Build logs
+
+# ================================================================
+# CLOUD BUILD LOGGING
+# ================================================================
 options:
   logging: CLOUD_LOGGING_ONLY
