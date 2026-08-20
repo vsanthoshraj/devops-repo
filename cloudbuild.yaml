@@ -1,0 +1,10 @@
+steps:
+  - name: ubuntu
+    args:
+      - bash
+      - -c
+      - |
+        echo "Hello from Cloud Build!"
+        echo "Project: $PROJECT_ID"
+        echo "Build ID: $BUILD_ID"
+        echo "Commit: $COMMIT_SHA"
