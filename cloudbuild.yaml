@@ -18,7 +18,6 @@ steps:
       - 'push'
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA'
 
-
   # 3. Scan image with Trivy
   - name: 'aquasec/trivy'
     id: 'TRIVY-SCAN'
@@ -29,7 +28,7 @@ steps:
       - '--severity'
       - 'HIGH,CRITICAL'
       - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_IMAGE}:$COMMIT_SHA'
-    
+
   # 4. Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     id: 'DEPLOY-CLOUD-RUN'
@@ -48,15 +47,13 @@ steps:
       - 'managed'
       - '--quiet'
 
-
-# Default substitutions
+# Substitutions
 substitutions:
   _REGION: 'asia-south1'
   _REPOSITORY: 'sk-trivy'
   _IMAGE: 'python-app'
   _SERVICE_NAME: 'sk-trivy-app'
 
-
-# Send build logs to Cloud Logging
+# Cloud Build logs
 options:
   logging: CLOUD_LOGGING_ONLY
